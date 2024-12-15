@@ -1,19 +1,44 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Search, Upload, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Highlight } from "./highlight";
 import { useToast } from "@/hooks/use-toast";
-// import { Toast } from '@/components/ui/use-toast'
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
 
 interface SearchResult {
 	pageNumber: number;
 	text: string;
+	position: {
+		top: number;
+		left: number;
+		width: number;
+		height: number;
+	};
+}
+
+interface HighlightProps {
 	position: { top: number; left: number; width: number; height: number };
+	scale: number;
+	isActive: boolean;
+}
+
+function Highlight({ position, scale, isActive }: HighlightProps) {
+	const style = {
+		position: "absolute" as const,
+		top: position.top * scale,
+		left: position.left * scale,
+		width: position.width * scale,
+		height: position.height * scale,
+		backgroundColor: isActive ? "rgba(255, 255, 0, 0.5)" : "rgba(255, 255, 0, 0.3)",
+		pointerEvents: "none" as const,
+		transition: "background-color 0.3s ease",
+		zIndex: 10,
+	};
+
+	return <div style={style} />;
 }
 
 export default function PDFViewer() {
@@ -25,6 +50,7 @@ export default function PDFViewer() {
 	const [scale, setScale] = useState(1.0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const { toast } = useToast();
+	const scrollContainerRef = useRef<HTMLDivElement>(null);
 
 	const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
 		const file = event.target.files?.[0];
@@ -44,34 +70,46 @@ export default function PDFViewer() {
 	};
 
 	const handleSearch = useCallback(async () => {
-		if (!searchTerm) return;
+		if (!searchTerm || !file) return;
 
-		// In a real implementation, you would search through the PDF content
-		// For this example, we'll simulate search results
-		const mockResults: SearchResult[] = [
-			{
-				pageNumber: 1,
-				text: searchTerm,
-				position: { top: 100, left: 50, width: 100, height: 20 },
-			},
-			{
-				pageNumber: 2,
-				text: searchTerm,
-				position: { top: 200, left: 100, width: 80, height: 20 },
-			},
-			{
-				pageNumber: 3,
-				text: searchTerm,
-				position: { top: 150, left: 75, width: 90, height: 20 },
-			},
-		];
-		setSearchResults(mockResults);
-		setCurrentResultIndex(0);
+		const pdf = await pdfjs.getDocument(URL.createObjectURL(file)).promise;
+		const newResults: SearchResult[] = [];
+
+		for (let i = 1; i <= pdf.numPages; i++) {
+			const page = await pdf.getPage(i);
+			const viewport = page.getViewport({ scale: scale }); // Use the current scale
+
+			const textContent = await page.getTextContent();
+
+			textContent.items.forEach((item: any) => {
+				const itemText = item.str.toLowerCase();
+				if (itemText.includes(searchTerm.toLowerCase())) {
+					const [x, y] = item.transform.slice(4, 6); // Extract x and y positions
+					const width = item.width;
+					const height = item.height;
+
+					newResults.push({
+						pageNumber: i,
+						text: item.str,
+						position: {
+							top: viewport.height - y, // Invert y-axis due to PDF coordinate system
+							left: x,
+							width,
+							height,
+						},
+					});
+				}
+			});
+		}
+
+		setSearchResults(newResults);
+		setCurrentResultIndex(newResults.length > 0 ? 0 : -1);
+
 		toast({
 			title: "Search Results",
-			description: `Found ${mockResults.length} results for "${searchTerm}"`,
+			description: `Found ${newResults.length} results for "${searchTerm}"`,
 		});
-	}, [searchTerm]);
+	}, [searchTerm, file, scale]);
 
 	const navigateResults = (direction: "next" | "prev") => {
 		if (searchResults.length === 0) return;
@@ -88,9 +126,19 @@ export default function PDFViewer() {
 	const handleZoom = (type: "in" | "out") => {
 		setScale((prevScale) => {
 			const newScale = type === "in" ? prevScale * 1.2 : prevScale / 1.2;
-			return Math.max(0.5, Math.min(newScale, 2)); // Limit scale between 0.5 and 2
+			return Math.max(0.5, Math.min(newScale, 2));
 		});
 	};
+
+	useEffect(() => {
+		if (currentResultIndex >= 0 && scrollContainerRef.current) {
+			const result = searchResults[currentResultIndex];
+			const pageElement = document.getElementById(`page_${result.pageNumber}`);
+			if (pageElement) {
+				pageElement.scrollIntoView({ behavior: "smooth", block: "center" });
+			}
+		}
+	}, [currentResultIndex, searchResults]);
 
 	return (
 		<div className="flex h-screen">
@@ -151,29 +199,24 @@ export default function PDFViewer() {
 				</div>
 			</div>
 
-			<div className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-hidden" ref={scrollContainerRef}>
 				<ScrollArea className="h-full">
 					{file ? (
-						<Document
-							file={file}
-							onLoadSuccess={onDocumentLoadSuccess}
-							onLoadError={() =>
-								toast({
-									title: "Error",
-									description: "Failed to load PDF. Please try again.",
-									variant: "destructive",
-								})
-							}
-						>
-							{Array.from(new Array(numPages), (el, index) => (
-								<div key={`page_${index + 1}`} className="mb-4 relative">
+						<Document file={file} onLoadSuccess={onDocumentLoadSuccess}>
+							{Array.from(new Array(numPages), (_, index) => (
+								<div
+									key={`page_${index + 1}`}
+									id={`page_${index + 1}`}
+									className="mb-4 relative"
+								>
 									<Page
 										pageNumber={index + 1}
-										renderTextLayer={true}
-										renderAnnotationLayer={true}
+										renderTextLayer={false} // Hide text layer
+										renderAnnotationLayer={false}
 										className="border shadow-sm"
 										scale={scale}
 									/>
+
 									{searchResults
 										.filter((result) => result.pageNumber === index + 1)
 										.map((result, i) => (
