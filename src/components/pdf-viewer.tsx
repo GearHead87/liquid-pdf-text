@@ -26,19 +26,22 @@ interface HighlightProps {
 }
 
 function Highlight({ position, scale, isActive }: HighlightProps) {
-	const style = {
-		position: "absolute" as const,
-		top: position.top * scale,
-		left: position.left * scale,
-		width: position.width * scale,
-		height: position.height * scale,
-		backgroundColor: isActive ? "rgba(255, 255, 0, 0.5)" : "rgba(255, 255, 0, 0.3)",
-		pointerEvents: "none" as const,
-		transition: "background-color 0.3s ease",
-		zIndex: 10,
-	};
 
-	return <div style={style} />;
+	return (
+		<div
+			style={{
+				position: "absolute",
+				top: position.top * scale,
+				left: position.left * scale,
+				width: position.width * scale,
+				height: position.height * scale,
+				backgroundColor: isActive ? "rgba(255, 255, 0, 0.5)" : "rgba(255, 255, 0, 0.3)",
+				pointerEvents: "none",
+				transition: "background-color 0.3s ease",
+				zIndex: 10,
+			}}
+		/>
+	);
 }
 
 export default function PDFViewer() {
@@ -81,6 +84,7 @@ export default function PDFViewer() {
 
 			const textContent = await page.getTextContent();
 
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			textContent.items.forEach((item: any) => {
 				const itemText = item.str.toLowerCase();
 				if (itemText.includes(searchTerm.toLowerCase())) {
@@ -92,7 +96,8 @@ export default function PDFViewer() {
 						pageNumber: i,
 						text: item.str,
 						position: {
-							top: viewport.height - y, // Invert y-axis due to PDF coordinate system
+							// Subtract 'y' and 'height' to align with the HTML coordinate system
+							top: viewport.height - y - height,
 							left: x,
 							width,
 							height,
@@ -109,7 +114,7 @@ export default function PDFViewer() {
 			title: "Search Results",
 			description: `Found ${newResults.length} results for "${searchTerm}"`,
 		});
-	}, [searchTerm, file, scale]);
+	}, [searchTerm, file, scale, toast]);
 
 	const navigateResults = (direction: "next" | "prev") => {
 		if (searchResults.length === 0) return;
@@ -128,6 +133,9 @@ export default function PDFViewer() {
 			const newScale = type === "in" ? prevScale * 1.2 : prevScale / 1.2;
 			return Math.max(0.5, Math.min(newScale, 2));
 		});
+
+		// Re-run the search to update highlight positions
+		handleSearch();
 	};
 
 	useEffect(() => {
@@ -211,10 +219,10 @@ export default function PDFViewer() {
 								>
 									<Page
 										pageNumber={index + 1}
-										renderTextLayer={false} // Hide text layer
+										renderTextLayer={false}
 										renderAnnotationLayer={false}
 										className="border shadow-sm"
-										scale={scale}
+										scale={scale} // Ensure this matches the current scale
 									/>
 
 									{searchResults
